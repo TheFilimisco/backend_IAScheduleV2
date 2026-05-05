@@ -25,9 +25,11 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.get("/:name", async (req, res) => {
+router.get("/name/:name", async (req, res) => {
   try {
-    const department = await Department.findOne({ name: req.params.name });
+    const department = await Department.findOne({
+      name: req.params.name.trim(),
+    });
     if (!department) {
       return res.status(404).json({ message: "Department not found" });
     }
