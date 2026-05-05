@@ -28,6 +28,9 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ message: "Name is required" });
+    }
     const department = await Department.create({ name });
     res.status(201).json({ department });
   } catch (err) {
@@ -47,6 +50,7 @@ router.put("/:id", async (req, res) => {
       updates,
       { new: true },
     );
+
     if (!department) {
       return res.status(404).json({ message: "Department not found" });
     }
@@ -58,7 +62,7 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    const employees = await Employee.find({ department: req.params.id });
+    const employees = await Employee.find({ departmentId: req.params.id });
     if (employees.length > 0) {
       return res.status(409).json({
         message: "Cannot delete department with assigned employees",
