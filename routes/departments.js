@@ -2,9 +2,9 @@ const express = require("express");
 const router = express.Router();
 
 const Department = require("../models/Department");
-const generateToken = require("../utils/generateToken");
+const Employee = require("../models/Employee");
 
-router.get("/departments", async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const departments = await Department.find();
     res.status(200).json({ departments });
@@ -13,7 +13,7 @@ router.get("/departments", async (req, res) => {
   }
 });
 
-router.get("/departments/:id", async (req, res) => {
+router.get("/:id", async (req, res) => {
   try {
     const department = await Department.findById(req.params.id);
     if (!department) {
@@ -25,7 +25,7 @@ router.get("/departments/:id", async (req, res) => {
   }
 });
 
-router.post("/departments", async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { name } = req.body;
     const department = await Department.create({ name });
@@ -35,12 +35,16 @@ router.post("/departments", async (req, res) => {
   }
 });
 
-router.put("/departments/:id", async (req, res) => {
+router.put("/:id", async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, color, description } = req.body;
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (color !== undefined) updates.color = color;
+    if (description !== undefined) updates.description = description;
     const department = await Department.findByIdAndUpdate(
       req.params.id,
-      { name, color?, description? },
+      updates,
       { new: true },
     );
     if (!department) {
@@ -52,11 +56,18 @@ router.put("/departments/:id", async (req, res) => {
   }
 });
 
-router.delete("/departments/:id", async (req, res) => {
+router.delete("/:id", async (req, res) => {
   try {
+    const employees = await Employee.find({ department: req.params.id });
+    if (employees.length > 0) {
+      return res.status(409).json({
+        message: "Cannot delete department with assigned employees",
+      });
+    }
+
     const department = await Department.findByIdAndDelete(req.params.id);
     if (!department) {
-        return res.status(404).json({ message: "Department not found" });
+      return res.status(404).json({ message: "Department not found" });
     }
     res.status(200).json({ message: "Department deleted" });
   } catch (err) {
