@@ -25,13 +25,30 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+router.get("/:name", async (req, res) => {
+  try {
+    const department = await Department.findOne({ name: req.params.name });
+    if (!department) {
+      return res.status(404).json({ message: "Department not found" });
+    }
+    res.status(200).json({ department });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 router.post("/", async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, color, description, managerId } = req.body;
     if (!name) {
       return res.status(400).json({ message: "Name is required" });
     }
-    const department = await Department.create({ name });
+    const department = await Department.create({
+      name,
+      color,
+      description,
+      managerId,
+    });
     res.status(201).json({ department });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
@@ -40,11 +57,12 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
-    const { name, color, description } = req.body;
+    const { name, color, description, managerId } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name;
     if (color !== undefined) updates.color = color;
     if (description !== undefined) updates.description = description;
+    if (managerId !== undefined) updates.managerId = managerId;
     const department = await Department.findByIdAndUpdate(
       req.params.id,
       updates,
