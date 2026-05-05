@@ -7,6 +7,7 @@ const scheduleRoutes = require("./schedule");
 router.use("/ia", iaRoutes);
 router.use("/schedule", scheduleRoutes);
 router.use("/auth", require("./auth"));
+router.use("/departments", require("./departments"));
 
 // Pendiente añadir las rutas CRUD
 // router.use('/departments', require('./departments'));
