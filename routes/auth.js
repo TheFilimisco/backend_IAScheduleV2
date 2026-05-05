@@ -1,4 +1,6 @@
-const router = XPathExpression.Router();
+import express from "express";
+
+const router = express.Router();
 
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
@@ -41,7 +43,9 @@ router.post("/login", async (req, res) => {
 
     user.lastLogin = Date.now();
 
-    const token = User.generateToken(user);
+    await user.save();
+
+    const token = generateToken(user);
 
     res.status(200).json({ token, user });
   } catch (err) {
@@ -55,3 +59,5 @@ router.get("/me", async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
+
+module.exports = router;
