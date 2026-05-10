@@ -1,21 +1,64 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Department = require('../models/Department');
-const Employee = require('../models/Employee');
-const Task = require('../models/Task');
+const Department = require("../models/Department");
+const Employee = require("../models/Employee");
+const Task = require("../models/Task");
 
-// GET /api/schedule
-// Devuelve la carga inicial del calendario y estado (todos los dptos, empleados y tareas)
-router.get('/', async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const departments = await Department.find();
-    const employees = await Employee.find();
+    const employees = await Employee.find({ status: "active" })
+      .populate("departmentId")
+      .populate("professionId");
     const tasks = await Task.find();
 
-    res.json({ departments, employees, tasks });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error al obtener los datos del schedule' });
+    res.status(200).json({ departments, employees, tasks });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+router.get("/sections", async (req, res) => {
+  try {
+    const departments = await Department.find();
+    const employees = await Employee.find({ status: "active" });
+    const tasks = await Task.find();
+
+    res.status(200).json([
+      { title: "Departments", items: departments },
+      { title: "Employees", items: employees },
+      { title: "Tasks", items: tasks },
+    ]);
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+router.get("/employees-by-dept", async (req, res) => {
+  try {
+    const employees = await Employee.find({ status: "active" }).populate("departmentId");
+    const grouped = {};
+    for (const emp of employees) {
+      const deptName = emp.departmentId?.name || "Sin departamento";
+      if (!grouped[deptName]) grouped[deptName] = [];
+      grouped[deptName].push(`${emp.firstName} ${emp.lastName}`);
+    }
+    res.status(200).json(grouped);
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+router.get("/enums", async (req, res) => {
+  try {
+    res.status(200).json({
+      schedules: ["morning", "early", "late", "night", "flexible"],
+      roles: ["employee", "supervisor", "manager", "trainee"],
+      priorities: ["low", "medium", "high", "urgent"],
+      statuses: ["pending", "in_progress", "completed", "blocked"],
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 });
 
