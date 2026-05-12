@@ -11,6 +11,12 @@ const logTaskChange = require("../utils/historyLogger");
 const checkOverlap = require("../utils/overlapChecker");
 const escapeRegex = require("../utils/escapeRegex");
 
+const buildUTCDate = (dateStr, hour) => {
+  const h = Math.floor(hour);
+  const m = Math.round((hour % 1) * 60);
+  return new Date(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`);
+};
+
 const SCHEDULE_HOURS = {
   morning: [9, 17],
   early: [8, 16],
@@ -45,15 +51,23 @@ const findDepartment = async (name) => {
 };
 
 const findTaskByTitle = async (title) => {
-  let task = await Task.findOne({ title });
-  if (!task) {
-    const escaped = escapeRegex(title);
-    const matches = await Task.find({ title: new RegExp(escaped, "i") }).limit(5);
-    if (matches.length === 0) return { error: `Tarea '${title}' no encontrada` };
-    if (matches.length > 1) return { error: `Multiples tareas coinciden: ${matches.map((t) => t.title).join(", ")}. Se mas especifico.` };
-    task = matches[0];
+  const exactMatches = await Task.find({ title }).limit(5);
+  if (exactMatches.length === 1) return { task: exactMatches[0] };
+  if (exactMatches.length > 1) {
+    const details = exactMatches.map((t) => {
+      const assignee = t.assigneeId ? `assignee:${t.assigneeId}` : "sin asignar";
+      const date = t.startDate ? t.startDate.toISOString().split("T")[0] : "sin fecha";
+      return `'${t.title}' (${date}, ${assignee}, id:${t._id})`;
+    });
+    return { error: `Multiples tareas con ese nombre: ${details.join(", ")}. Usa el id para especificar cual.` };
   }
-  return { task };
+  const escaped = escapeRegex(title);
+  const regexMatches = await Task.find({ title: new RegExp(escaped, "i") }).limit(5);
+  if (regexMatches.length === 0) return { error: `Tarea '${title}' no encontrada` };
+  if (regexMatches.length > 1) {
+    return { error: `Multiples tareas coinciden: ${regexMatches.map((t) => t.title).join(", ")}. Se mas especifico.` };
+  }
+  return { task: regexMatches[0] };
 };
 
 // ── Department Tools ──
@@ -408,8 +422,7 @@ const createTask = tool(
     }
 
     if (date && startHour !== undefined) {
-      const startDate = new Date(date);
-      startDate.setHours(Math.floor(startHour), Math.round((startHour % 1) * 60), 0, 0);
+      const startDate = buildUTCDate(date, startHour);
       taskData.startDate = startDate;
       taskData.dueDate = new Date(startDate.getTime() + duration * 60000);
 
@@ -455,8 +468,7 @@ const assignTask = tool(
     }
 
     const previousState = task.toJSON();
-    const startDate = new Date(date);
-    startDate.setHours(Math.floor(startHour), Math.round((startHour % 1) * 60), 0, 0);
+    const startDate = buildUTCDate(date, startHour);
 
     const overlap = await checkOverlap(emp._id, startDate, task.durationMinutes, task._id);
     if (overlap) return JSON.stringify({ error: `Overlap conflict with task '${overlap.title}'` });
@@ -500,15 +512,14 @@ const moveTask = tool(
     }
 
     if (newDate) {
-      const startDate = new Date(newDate);
-      const hour = newStartHour !== undefined ? newStartHour : (task.startDate ? task.startDate.getHours() + task.startDate.getMinutes() / 60 : 9);
-      startDate.setHours(Math.floor(hour), Math.round((hour % 1) * 60), 0, 0);
+      const hour = newStartHour !== undefined ? newStartHour : (task.startDate ? task.startDate.getUTCHours() + task.startDate.getUTCMinutes() / 60 : 9);
+      const startDate = buildUTCDate(newDate, hour);
       task.startDate = startDate;
       task.dueDate = new Date(startDate.getTime() + task.durationMinutes * 60000);
       actions.push("RESCHEDULED");
     } else if (newStartHour !== undefined && task.startDate) {
-      const newStart = new Date(task.startDate);
-      newStart.setHours(Math.floor(newStartHour), Math.round((newStartHour % 1) * 60), 0, 0);
+      const dateStr = task.startDate.toISOString().split("T")[0];
+      const newStart = buildUTCDate(dateStr, newStartHour);
       task.startDate = newStart;
       task.dueDate = new Date(newStart.getTime() + task.durationMinutes * 60000);
       actions.push("RESCHEDULED");
@@ -517,7 +528,7 @@ const moveTask = tool(
     if (task.assigneeId && task.startDate) {
       const emp = await Employee.findById(task.assigneeId);
       if (emp) {
-        const startHour = task.startDate.getHours() + task.startDate.getMinutes() / 60;
+        const startHour = task.startDate.getUTCHours() + task.startDate.getUTCMinutes() / 60;
         const endHour = startHour + task.durationMinutes / 60;
         if (!isWithinSchedule(emp.schedule, startHour, endHour)) {
           return JSON.stringify({ error: `Task falls outside ${emp.firstName}'s schedule (${emp.schedule}: ${SCHEDULE_HOURS[emp.schedule].join("-")})` });
@@ -621,8 +632,7 @@ const checkAvailability = tool(
       return JSON.stringify({ available: false, reason: `Outside ${emp.firstName}'s schedule (${emp.schedule}: ${SCHEDULE_HOURS[emp.schedule].join("-")})` });
     }
 
-    const startDate = new Date(date);
-    startDate.setHours(Math.floor(startHour), Math.round((startHour % 1) * 60), 0, 0);
+    const startDate = buildUTCDate(date, startHour);
 
     const overlap = await checkOverlap(emp._id, startDate, duration);
     if (overlap) {
@@ -659,7 +669,7 @@ const getScheduleSummary = tool(
       const start = new Date(t.startDate);
       byEmployee[name].push({
         title: t.title,
-        time: `${start.getHours()}:${String(start.getMinutes()).padStart(2, "0")}`,
+        time: `${start.getUTCHours()}:${String(start.getUTCMinutes()).padStart(2, "0")}`,
         duration: `${t.durationMinutes}min`,
         status: t.status,
       });

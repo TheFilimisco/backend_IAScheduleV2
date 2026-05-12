@@ -40,9 +40,8 @@ taskSchema.set('toJSON', {
     if (ret.startDate) {
       const start = new Date(ret.startDate);
       // startHour soporta minutos: 10.5 = 10:30, 14.75 = 14:45
-      ret.startHour = start.getHours() + (start.getMinutes() / 60);
-      // dateStr para filtrar por día en el calendario
-      ret.dateStr = start.toDateString(); // Ej: "Fri May 02 2026"
+      ret.startHour = start.getUTCHours() + (start.getUTCMinutes() / 60);
+      ret.dateStr = start.toISOString().split("T")[0];
     } else {
       ret.startHour = null;
       ret.dateStr = null;
