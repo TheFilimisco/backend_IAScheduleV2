@@ -23,6 +23,10 @@ const taskSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
+taskSchema.index({ assigneeId: 1, startDate: 1, dueDate: 1 });
+taskSchema.index({ startDate: 1 });
+taskSchema.index({ departmentId: 1 });
+
 // Transformación automática para el Frontend al hacer res.json().
 // Estos campos se calculan desde los datos reales, NO se guardan en la BD.
 taskSchema.set('toJSON', {
@@ -36,9 +40,8 @@ taskSchema.set('toJSON', {
     if (ret.startDate) {
       const start = new Date(ret.startDate);
       // startHour soporta minutos: 10.5 = 10:30, 14.75 = 14:45
-      ret.startHour = start.getHours() + (start.getMinutes() / 60);
-      // dateStr para filtrar por día en el calendario
-      ret.dateStr = start.toDateString(); // Ej: "Fri May 02 2026"
+      ret.startHour = start.getUTCHours() + (start.getUTCMinutes() / 60);
+      ret.dateStr = start.toISOString().split("T")[0];
     } else {
       ret.startHour = null;
       ret.dateStr = null;
