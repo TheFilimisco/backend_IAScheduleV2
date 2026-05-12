@@ -13,7 +13,8 @@ const historyTaskSchema = new mongoose.Schema({
       'REASSIGNED',       // Cambio de empleado asignado (assigneeId)
       'DURATION_CHANGED', // Cambio de durationMinutes (resize de tarjeta)
       'STATUS_CHANGED',   // Cambio de estado: pending -> in_progress, etc.
-      'DELETED'           // Tarea eliminada
+      'DELETED',          // Tarea eliminada
+      'UPDATED'           // Cambio general (titulo, descripcion, prioridad)
     ]
   },
 
@@ -24,5 +25,7 @@ const historyTaskSchema = new mongoose.Schema({
   comments: { type: String }                       // Nota opcional del administrador
 
 }, { timestamps: true }); // createdAt = fecha exacta del cambio
+
+historyTaskSchema.index({ taskId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('HistoryTask', historyTaskSchema);

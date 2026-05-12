@@ -23,6 +23,10 @@ const taskSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
+taskSchema.index({ assigneeId: 1, startDate: 1, dueDate: 1 });
+taskSchema.index({ startDate: 1 });
+taskSchema.index({ departmentId: 1 });
+
 // Transformación automática para el Frontend al hacer res.json().
 // Estos campos se calculan desde los datos reales, NO se guardan en la BD.
 taskSchema.set('toJSON', {

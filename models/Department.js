@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const departmentSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },
   description: { type: String },
-  color: { type: String, default: '#6b7280' }, // Color hex para la UI del calendario
+  color: { type: String, default: '#6b7280', match: [/^#[0-9a-fA-F]{6}$/, 'Color hex invalido'] },
   managerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }
 }, { timestamps: true });
 

@@ -2,23 +2,8 @@ const express = require("express");
 const router = express.Router();
 
 const Task = require("../models/Task");
-const Employee = require("../models/Employee");
 const logTaskChange = require("../utils/historyLogger");
-
-const checkOverlap = async (assigneeId, startDate, durationMinutes, excludeTaskId) => {
-  const start = new Date(startDate);
-  const end = new Date(start.getTime() + durationMinutes * 60000);
-
-  const filter = {
-    assigneeId,
-    startDate: { $lt: end },
-    dueDate: { $gt: start },
-  };
-
-  if (excludeTaskId) filter._id = { $ne: excludeTaskId };
-
-  return await Task.findOne(filter);
-};
+const checkOverlap = require("../utils/overlapChecker");
 
 router.get("/", async (req, res) => {
   try {
@@ -36,7 +21,8 @@ router.get("/", async (req, res) => {
       .populate("departmentId");
     res.status(200).json({ tasks });
   } catch (err) {
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("[Tasks GET] ", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -51,7 +37,8 @@ router.get("/:id", async (req, res) => {
     }
     res.status(200).json({ task });
   } catch (err) {
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("[Tasks GET/:id] ", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -89,7 +76,8 @@ router.post("/", async (req, res) => {
 
     res.status(201).json({ task });
   } catch (err) {
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("[Tasks POST] ", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -137,18 +125,20 @@ router.put("/:id", async (req, res) => {
     await task.save();
     const newState = task.toJSON();
 
-    let action = "STATUS_CHANGED";
-    if (startDate !== undefined && previousState.startDate) action = "RESCHEDULED";
-    else if (startDate !== undefined && !previousState.startDate) action = "SCHEDULED";
-    if (assigneeId !== undefined) action = "REASSIGNED";
-    if (durationMinutes !== undefined) action = "DURATION_CHANGED";
+    let action = "UPDATED";
     if (status !== undefined) action = "STATUS_CHANGED";
+    if (durationMinutes !== undefined) action = "DURATION_CHANGED";
+    if (assigneeId !== undefined && !previousState.assigneeId) action = "SCHEDULED";
+    if (assigneeId !== undefined && previousState.assigneeId) action = "REASSIGNED";
+    if (startDate !== undefined && previousState.startDate) action = "RESCHEDULED";
+    if (startDate !== undefined && !previousState.startDate) action = "SCHEDULED";
 
     await logTaskChange(task._id, action, req.body.changedBy, previousState, newState);
 
     res.status(200).json({ task });
   } catch (err) {
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("[Tasks PUT] ", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -162,11 +152,12 @@ router.delete("/:id", async (req, res) => {
     const previousState = task.toJSON();
     await Task.findByIdAndDelete(req.params.id);
 
-    await logTaskChange(task._id, "DELETED", req.body.changedBy, previousState, null);
+    await logTaskChange(task._id, "DELETED", null, previousState, null);
 
     res.status(200).json({ message: "Task deleted" });
   } catch (err) {
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("[Tasks DELETE] ", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
