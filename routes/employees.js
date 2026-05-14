@@ -25,6 +25,7 @@ router.get("/", async (req, res) => {
   try {
     const filter = {};
     if (req.query.departmentId) filter.departmentId = req.query.departmentId;
+    if (req.query.status) filter.status = req.query.status;
     const employees = await Employee.find(filter)
       .populate("departmentId")
       .populate("professionId");

@@ -152,7 +152,7 @@ router.delete("/:id", async (req, res) => {
     const previousState = task.toJSON();
     await Task.findByIdAndDelete(req.params.id);
 
-    await logTaskChange(task._id, "DELETED", null, previousState, null);
+    await logTaskChange(task._id, "DELETED", req.body?.changedBy || null, previousState, null);
 
     res.status(200).json({ message: "Task deleted" });
   } catch (err) {

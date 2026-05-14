@@ -25,9 +25,9 @@ router.get("/sections", async (req, res) => {
     const tasks = await Task.find();
 
     res.status(200).json([
-      { title: "Departments", items: departments },
-      { title: "Employees", items: employees },
-      { title: "Tasks", items: tasks },
+      { title: "Departaments", items: departments.map(d => d.name) },
+      { title: "Employees", items: employees.map(e => `${e.firstName} ${e.lastName}`) },
+      { title: "Tasks", items: tasks.map(t => t.title) },
     ]);
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
