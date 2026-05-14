@@ -74,7 +74,12 @@ router.post("/", async (req, res) => {
 
     await logTaskChange(task._id, "CREATED", createdBy, null, task.toJSON());
 
-    res.status(201).json({ task });
+    const populatedTask = await Task.findById(task._id)
+      .populate("assigneeId")
+      .populate("departmentId")
+      .populate("createdBy");
+
+    res.status(201).json({ task: populatedTask });
   } catch (err) {
     console.error("[Tasks POST] ", err);
     res.status(500).json({ error: "Server error" });
@@ -135,7 +140,12 @@ router.put("/:id", async (req, res) => {
 
     await logTaskChange(task._id, action, req.body.changedBy, previousState, newState);
 
-    res.status(200).json({ task });
+    const populatedTask = await Task.findById(task._id)
+      .populate("assigneeId")
+      .populate("departmentId")
+      .populate("createdBy");
+
+    res.status(200).json({ task: populatedTask });
   } catch (err) {
     console.error("[Tasks PUT] ", err);
     res.status(500).json({ error: "Server error" });
