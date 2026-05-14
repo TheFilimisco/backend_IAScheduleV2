@@ -3,6 +3,7 @@ const router = express.Router();
 
 const Employee = require("../models/Employee");
 const Department = require("../models/Department");
+const User = require("../models/User");
 
 router.get("/by-department", async (req, res) => {
   try {
@@ -52,10 +53,14 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { code, firstName, lastName, email, professionId, departmentId, birthday, schedule, role, managerId } = req.body;
+    const { code, firstName, lastName, email, professionId, departmentId, birthday, schedule, role, managerId, password } = req.body;
 
     if (!code || !firstName || !lastName || !email) {
       return res.status(400).json({ error: "code, firstName, lastName and email are required" });
+    }
+
+    if (!password || password.length < 8) {
+      return res.status(400).json({ error: "password is required and must be at least 8 characters" });
     }
 
     if (departmentId) {
@@ -74,6 +79,15 @@ router.post("/", async (req, res) => {
       code, firstName, lastName, email, professionId, departmentId, birthday, schedule, role, managerId,
     });
 
+    // Create linked User account — role maps manager→admin, rest→employee
+    const userRole = role === "manager" ? "admin" : "employee";
+    try {
+      await User.create({ code, email, password, role: userRole, employeeId: employee._id });
+    } catch (userErr) {
+      await Employee.findByIdAndDelete(employee._id);
+      return res.status(409).json({ error: "Could not create user account: " + (userErr.message ?? "duplicate email or code") });
+    }
+
     res.status(201).json({ employee });
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
@@ -82,7 +96,7 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
-    const { code, firstName, lastName, email, professionId, departmentId, birthday, schedule, role, managerId, status } = req.body;
+    const { code, firstName, lastName, email, professionId, departmentId, birthday, schedule, role, managerId, status, password } = req.body;
 
     const updates = {};
     if (code !== undefined) updates.code = code;
@@ -103,6 +117,16 @@ router.put("/:id", async (req, res) => {
 
     if (!employee) {
       return res.status(404).json({ error: "Employee not found" });
+    }
+
+    // Update linked User if password or role changed
+    if (password || role !== undefined) {
+      const user = await User.findOne({ employeeId: employee._id });
+      if (user) {
+        if (password && password.length >= 8) user.password = password;
+        if (role !== undefined) user.role = role === "manager" ? "admin" : "employee";
+        await user.save();
+      }
     }
 
     res.status(200).json({ employee });
