@@ -7,6 +7,7 @@ const Department = require("../models/Department");
 const Employee = require("../models/Employee");
 const Task = require("../models/Task");
 const Profession = require("../models/Profession");
+const User = require("../models/User");
 const logTaskChange = require("../utils/historyLogger");
 const checkOverlap = require("../utils/overlapChecker");
 const escapeRegex = require("../utils/escapeRegex");
@@ -255,11 +256,26 @@ const listEmployees = tool(
 
 const createEmployee = tool(
   async ({ firstName, lastName, email, code, departmentName, schedule, role }) => {
-    const empCode = code || `EMP-${firstName.substring(0, 2).toUpperCase()}${lastName.substring(0, 2).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
     const empEmail = email || `${firstName.toLowerCase()}.${lastName.toLowerCase()}@company.com`;
 
-    const exists = await Employee.findOne({ $or: [{ email: empEmail }, { code: empCode }] });
-    if (exists) return JSON.stringify({ error: `Employee with email '${empEmail}' or code '${empCode}' already exists` });
+    // If a code was provided, use it as-is but verify it's free
+    let empCode = code;
+    if (empCode) {
+      const taken = await Employee.findOne({ code: empCode });
+      if (taken) return JSON.stringify({ error: `Employee code '${empCode}' already exists` });
+    } else {
+      // Auto-generate: retry up to 10 times until a free code is found
+      const prefix = `EMP-${firstName.substring(0, 2).toUpperCase()}${lastName.substring(0, 2).toUpperCase()}`;
+      for (let i = 0; i < 10; i++) {
+        const candidate = `${prefix}-${Math.floor(Math.random() * 900 + 100)}`;
+        const taken = await Employee.findOne({ code: candidate });
+        if (!taken) { empCode = candidate; break; }
+      }
+      if (!empCode) return JSON.stringify({ error: "Could not generate a unique employee code after 10 attempts" });
+    }
+
+    const emailTaken = await Employee.findOne({ email: empEmail });
+    if (emailTaken) return JSON.stringify({ error: `Employee with email '${empEmail}' already exists` });
 
     const employeeData = {
       firstName,
@@ -278,7 +294,18 @@ const createEmployee = tool(
     }
 
     const employee = await Employee.create(employeeData);
-    return JSON.stringify({ success: true, employee: { id: employee._id, name: `${employee.firstName} ${employee.lastName}`, code: employee.code, email: employee.email } });
+
+    // Create linked User account so the employee can log in
+    const userRole = (employeeData.role === "manager") ? "admin" : "employee";
+    const defaultPassword = `${firstName.charAt(0).toUpperCase()}${lastName.charAt(0).toLowerCase()}${empCode}`;
+    try {
+      await User.create({ code: empCode, email: empEmail, password: defaultPassword, role: userRole, employeeId: employee._id });
+    } catch (userErr) {
+      await Employee.findByIdAndDelete(employee._id);
+      return JSON.stringify({ error: `Empleado creado pero falló la cuenta de usuario: ${userErr.message}` });
+    }
+
+    return JSON.stringify({ success: true, employee: { id: employee._id, name: `${employee.firstName} ${employee.lastName}`, code: employee.code, email: employee.email, defaultPassword } });
   },
   {
     name: "create_employee",
@@ -836,7 +863,7 @@ const runAgent = async (prompt) => {
             pendingConfirmation = { id: parsed.id, description: parsed.description };
             break;
           }
-        } catch {}
+        } catch { }
       }
     }
 

@@ -35,4 +35,13 @@ const employeeSchema = new mongoose.Schema({
 employeeSchema.index({ firstName: 1, lastName: 1 });
 employeeSchema.index({ departmentId: 1, status: 1 });
 
+employeeSchema.set('toJSON', {
+  virtuals: true,
+  versionKey: false,
+  transform: (doc, ret) => {
+    ret.id = ret._id;
+    delete ret._id;
+  },
+});
+
 module.exports = mongoose.model('Employee', employeeSchema);

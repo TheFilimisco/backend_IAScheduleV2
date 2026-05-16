@@ -36,6 +36,17 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/check-code", async (req, res) => {
+  try {
+    const { code } = req.query;
+    if (!code) return res.status(400).json({ error: "code query param is required" });
+    const exists = await Employee.findOne({ code: String(code) });
+    res.status(200).json({ available: !exists });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const employee = await Employee.findById(req.params.id)
@@ -137,17 +148,16 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    const employee = await Employee.findByIdAndUpdate(
-      req.params.id,
-      { status: "inactive" },
-      { new: true },
-    );
+    const employee = await Employee.findByIdAndDelete(req.params.id);
 
     if (!employee) {
       return res.status(404).json({ error: "Employee not found" });
     }
 
-    res.status(200).json({ message: "Employee deactivated", employee });
+    // Delete the linked User account created when the employee was registered
+    await User.findOneAndDelete({ employeeId: req.params.id });
+
+    res.status(200).json({ message: "Employee deleted" });
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
   }
