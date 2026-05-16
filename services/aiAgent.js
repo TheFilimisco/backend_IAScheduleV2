@@ -11,9 +11,7 @@ const User = require("../models/User");
 const logTaskChange = require("../utils/historyLogger");
 const checkOverlap = require("../utils/overlapChecker");
 const escapeRegex = require("../utils/escapeRegex");
-
-// ── Pending Confirmations ─────────────────────────────────────────────────────
-// Delete operations pause here and wait for explicit user approval.
+const { buildUTCDate, toLocalHour, toLocalParts, spanishDayRange } = require("../utils/timezone");
 
 const pendingConfirmations = new Map();
 
@@ -65,14 +63,6 @@ const executeConfirmedAction = async (id) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-const buildUTCDate = (dateStr, hour) => {
-  const h = Math.floor(hour);
-  const m = Math.round((hour % 1) * 60);
-  return new Date(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`);
-};
-
 const SCHEDULE_HOURS = {
   morning: [9, 17],
   early: [8, 16],
@@ -112,7 +102,7 @@ const findTaskByTitle = async (title) => {
   if (exactMatches.length > 1) {
     const details = exactMatches.map((t) => {
       const assignee = t.assigneeId ? `assignee:${t.assigneeId}` : "sin asignar";
-      const date = t.startDate ? t.startDate.toISOString().split("T")[0] : "sin fecha";
+      const date = t.startDate ? toLocalParts(t.startDate).dateStr : "sin fecha";
       return `'${t.title}' (${date}, ${assignee}, id:${t._id})`;
     });
     return { error: `Multiples tareas con ese nombre: ${details.join(", ")}. Usa el id para especificar cual.` };
@@ -460,10 +450,8 @@ const listTasks = tool(
   async ({ date, assigneeName }) => {
     const filter = {};
     if (date) {
-      const day = new Date(date);
-      const nextDay = new Date(day);
-      nextDay.setDate(nextDay.getDate() + 1);
-      filter.startDate = { $gte: day, $lt: nextDay };
+      const { start, end } = spanishDayRange(date);
+      filter.startDate = { $gte: start, $lt: end };
     }
     if (assigneeName) {
       const emp = await findEmployee(assigneeName);
@@ -604,13 +592,13 @@ const moveTask = tool(
     }
 
     if (newDate) {
-      const hour = newStartHour !== undefined ? newStartHour : (task.startDate ? task.startDate.getUTCHours() + task.startDate.getUTCMinutes() / 60 : 9);
+      const hour = newStartHour !== undefined ? newStartHour : (task.startDate ? toLocalParts(task.startDate).hour : 9);
       const startDate = buildUTCDate(newDate, hour);
       task.startDate = startDate;
       task.dueDate = new Date(startDate.getTime() + task.durationMinutes * 60000);
       actions.push("RESCHEDULED");
     } else if (newStartHour !== undefined && task.startDate) {
-      const dateStr = task.startDate.toISOString().split("T")[0];
+      const dateStr = toLocalParts(task.startDate).dateStr;
       const newStart = buildUTCDate(dateStr, newStartHour);
       task.startDate = newStart;
       task.dueDate = new Date(newStart.getTime() + task.durationMinutes * 60000);
@@ -620,7 +608,7 @@ const moveTask = tool(
     if (task.assigneeId && task.startDate) {
       const emp = await Employee.findById(task.assigneeId);
       if (emp) {
-        const startHour = task.startDate.getUTCHours() + task.startDate.getUTCMinutes() / 60;
+        const startHour = toLocalParts(task.startDate).hour;
         const endHour = startHour + task.durationMinutes / 60;
         if (!isWithinSchedule(emp.schedule, startHour, endHour)) {
           return JSON.stringify({ error: `Task falls outside ${emp.firstName}'s schedule (${emp.schedule}: ${SCHEDULE_HOURS[emp.schedule].join("-")})` });
@@ -748,22 +736,19 @@ const checkAvailability = tool(
 
 const getScheduleSummary = tool(
   async ({ date }) => {
-    const day = new Date(date);
-    const nextDay = new Date(day);
-    nextDay.setDate(nextDay.getDate() + 1);
+    const { start, end } = spanishDayRange(date);
 
     const tasks = await Task.find({
-      startDate: { $gte: day, $lt: nextDay },
+      startDate: { $gte: start, $lt: end },
     }).populate("assigneeId").populate("departmentId");
 
     const byEmployee = {};
     for (const t of tasks) {
       const name = t.assigneeId ? `${t.assigneeId.firstName} ${t.assigneeId.lastName}` : "Unassigned";
       if (!byEmployee[name]) byEmployee[name] = [];
-      const start = new Date(t.startDate);
       byEmployee[name].push({
         title: t.title,
-        time: `${start.getUTCHours()}:${String(start.getUTCMinutes()).padStart(2, "0")}`,
+        time: toLocalHour(new Date(t.startDate)),
         duration: `${t.durationMinutes}min`,
         status: t.status,
       });
@@ -813,9 +798,10 @@ const llm = new ChatOpenAI({
 });
 
 const runAgent = async (prompt) => {
-  const today = new Date().toISOString().split("T")[0];
-  const dayName = new Date().toLocaleDateString("es-ES", { weekday: "long" });
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  const now = new Date();
+  const today = toLocalParts(now).dateStr;
+  const dayName = now.toLocaleDateString("es-ES", { timeZone: "Europe/Madrid", weekday: "long" });
+  const tomorrow = toLocalParts(new Date(now.getTime() + 86400000)).dateStr;
 
   const systemPrompt =
     `You are a scheduling assistant for a company. Today is ${dayName}, ${today}. Tomorrow is ${tomorrow}. ` +

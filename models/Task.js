@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { toLocalParts } = require("../utils/timezone");
 
 const taskSchema = new mongoose.Schema({
   // Datos Fundamentales
@@ -39,12 +40,10 @@ taskSchema.set('toJSON', {
     ret.id = ret._id;
     delete ret._id;
 
-    // Derivados de UI para el calendario
     if (ret.startDate) {
-      const start = new Date(ret.startDate);
-      // startHour soporta minutos: 10.5 = 10:30, 14.75 = 14:45
-      ret.startHour = start.getUTCHours() + (start.getUTCMinutes() / 60);
-      ret.dateStr = start.toISOString().split("T")[0];
+      const local = toLocalParts(new Date(ret.startDate));
+      ret.startHour = local.hour;
+      ret.dateStr = local.dateStr;
     } else {
       ret.startHour = null;
       ret.dateStr = null;

@@ -4,6 +4,7 @@ const router = express.Router();
 const Task = require("../models/Task");
 const logTaskChange = require("../utils/historyLogger");
 const checkOverlap = require("../utils/overlapChecker");
+const { spanishDayRange } = require("../utils/timezone");
 
 router.get("/", async (req, res) => {
   try {
@@ -11,10 +12,8 @@ router.get("/", async (req, res) => {
     if (req.query.assigneeId) filter.assigneeId = req.query.assigneeId;
     if (req.query.departmentId) filter.departmentId = req.query.departmentId;
     if (req.query.date) {
-      const day = new Date(req.query.date);
-      const nextDay = new Date(day);
-      nextDay.setDate(nextDay.getDate() + 1);
-      filter.startDate = { $gte: day, $lt: nextDay };
+      const { start, end } = spanishDayRange(req.query.date);
+      filter.startDate = { $gte: start, $lt: end };
     }
     const tasks = await Task.find(filter)
       .populate("assigneeId")
