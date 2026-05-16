@@ -10,12 +10,7 @@ const Profession = require("../models/Profession");
 const logTaskChange = require("../utils/historyLogger");
 const checkOverlap = require("../utils/overlapChecker");
 const escapeRegex = require("../utils/escapeRegex");
-
-const buildUTCDate = (dateStr, hour) => {
-  const h = Math.floor(hour);
-  const m = Math.round((hour % 1) * 60);
-  return new Date(`${dateStr}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`);
-};
+const { buildUTCDate, toLocalHour, spanishDayRange } = require("../utils/timezone");
 
 const SCHEDULE_HOURS = {
   morning: [9, 17],
@@ -368,10 +363,8 @@ const listTasks = tool(
   async ({ date, assigneeName }) => {
     const filter = {};
     if (date) {
-      const day = new Date(date);
-      const nextDay = new Date(day);
-      nextDay.setDate(nextDay.getDate() + 1);
-      filter.startDate = { $gte: day, $lt: nextDay };
+      const { start, end } = spanishDayRange(date);
+      filter.startDate = { $gte: start, $lt: end };
     }
     if (assigneeName) {
       const emp = await findEmployee(assigneeName);
@@ -654,22 +647,19 @@ const checkAvailability = tool(
 
 const getScheduleSummary = tool(
   async ({ date }) => {
-    const day = new Date(date);
-    const nextDay = new Date(day);
-    nextDay.setDate(nextDay.getDate() + 1);
+    const { start, end } = spanishDayRange(date);
 
     const tasks = await Task.find({
-      startDate: { $gte: day, $lt: nextDay },
+      startDate: { $gte: start, $lt: end },
     }).populate("assigneeId").populate("departmentId");
 
     const byEmployee = {};
     for (const t of tasks) {
       const name = t.assigneeId ? `${t.assigneeId.firstName} ${t.assigneeId.lastName}` : "Unassigned";
       if (!byEmployee[name]) byEmployee[name] = [];
-      const start = new Date(t.startDate);
       byEmployee[name].push({
         title: t.title,
-        time: `${start.getUTCHours()}:${String(start.getUTCMinutes()).padStart(2, "0")}`,
+        time: toLocalHour(new Date(t.startDate)),
         duration: `${t.durationMinutes}min`,
         status: t.status,
       });
