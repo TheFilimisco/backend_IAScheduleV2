@@ -7,10 +7,61 @@ const Department = require("../models/Department");
 const Employee = require("../models/Employee");
 const Task = require("../models/Task");
 const Profession = require("../models/Profession");
+const User = require("../models/User");
 const logTaskChange = require("../utils/historyLogger");
 const checkOverlap = require("../utils/overlapChecker");
 const escapeRegex = require("../utils/escapeRegex");
-const { buildUTCDate, toLocalHour, spanishDayRange } = require("../utils/timezone");
+const { buildUTCDate, toLocalHour, toLocalParts, spanishDayRange } = require("../utils/timezone");
+
+const pendingConfirmations = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, data] of pendingConfirmations.entries()) {
+    if (data.expiresAt < now) pendingConfirmations.delete(id);
+  }
+}, 60_000);
+
+const createPendingConfirmation = (action, args, description) => {
+  const id = Math.random().toString(36).slice(2, 11);
+  pendingConfirmations.set(id, { action, args, description, expiresAt: Date.now() + 5 * 60_000 });
+  return { id, description };
+};
+
+const cancelConfirmation = (id) => {
+  pendingConfirmations.delete(id);
+};
+
+const executeConfirmedAction = async (id) => {
+  const pending = pendingConfirmations.get(id);
+  if (!pending) return { ok: false, message: "Confirmación no encontrada o expirada." };
+  pendingConfirmations.delete(id);
+
+  switch (pending.action) {
+    case "delete_department": {
+      const { deptId, deptName } = pending.args;
+      await Department.findByIdAndDelete(deptId);
+      return { ok: true, message: `Departamento "${deptName}" eliminado correctamente.` };
+    }
+    case "delete_employee": {
+      const { empId, empName } = pending.args;
+      await Employee.findByIdAndUpdate(empId, { status: "inactive" });
+      return { ok: true, message: `Empleado "${empName}" desactivado correctamente.` };
+    }
+    case "delete_task": {
+      const { taskId, taskTitle } = pending.args;
+      await Task.findByIdAndDelete(taskId);
+      return { ok: true, message: `Tarea "${taskTitle}" eliminada correctamente.` };
+    }
+    case "delete_profession": {
+      const { profId, profName } = pending.args;
+      await Profession.findByIdAndUpdate(profId, { isActive: false });
+      return { ok: true, message: `Profesión "${profName}" desactivada correctamente.` };
+    }
+    default:
+      return { ok: false, message: "Acción desconocida." };
+  }
+};
 
 const SCHEDULE_HOURS = {
   morning: [9, 17],
@@ -51,7 +102,7 @@ const findTaskByTitle = async (title) => {
   if (exactMatches.length > 1) {
     const details = exactMatches.map((t) => {
       const assignee = t.assigneeId ? `assignee:${t.assigneeId}` : "sin asignar";
-      const date = t.startDate ? t.startDate.toISOString().split("T")[0] : "sin fecha";
+      const date = t.startDate ? toLocalParts(t.startDate).dateStr : "sin fecha";
       return `'${t.title}' (${date}, ${assignee}, id:${t._id})`;
     });
     return { error: `Multiples tareas con ese nombre: ${details.join(", ")}. Usa el id para especificar cual.` };
@@ -142,8 +193,12 @@ const deleteDepartment = tool(
     if (!dept) return JSON.stringify({ error: `Department '${departmentName}' not found` });
     const empCount = await Employee.countDocuments({ departmentId: dept._id, status: "active" });
     if (empCount > 0) return JSON.stringify({ error: `Cannot delete '${dept.name}', it has ${empCount} active employees` });
-    await Department.findByIdAndDelete(dept._id);
-    return JSON.stringify({ success: true, deleted: dept.name });
+    const confirmation = createPendingConfirmation(
+      "delete_department",
+      { deptId: dept._id, deptName: dept.name },
+      `Eliminar el departamento "${dept.name}"`
+    );
+    return JSON.stringify({ needsConfirmation: true, ...confirmation });
   },
   {
     name: "delete_department",
@@ -191,11 +246,26 @@ const listEmployees = tool(
 
 const createEmployee = tool(
   async ({ firstName, lastName, email, code, departmentName, schedule, role }) => {
-    const empCode = code || `EMP-${firstName.substring(0, 2).toUpperCase()}${lastName.substring(0, 2).toUpperCase()}-${Math.floor(Math.random() * 900 + 100)}`;
     const empEmail = email || `${firstName.toLowerCase()}.${lastName.toLowerCase()}@company.com`;
 
-    const exists = await Employee.findOne({ $or: [{ email: empEmail }, { code: empCode }] });
-    if (exists) return JSON.stringify({ error: `Employee with email '${empEmail}' or code '${empCode}' already exists` });
+    // If a code was provided, use it as-is but verify it's free
+    let empCode = code;
+    if (empCode) {
+      const taken = await Employee.findOne({ code: empCode });
+      if (taken) return JSON.stringify({ error: `Employee code '${empCode}' already exists` });
+    } else {
+      // Auto-generate: retry up to 10 times until a free code is found
+      const prefix = `EMP-${firstName.substring(0, 2).toUpperCase()}${lastName.substring(0, 2).toUpperCase()}`;
+      for (let i = 0; i < 10; i++) {
+        const candidate = `${prefix}-${Math.floor(Math.random() * 900 + 100)}`;
+        const taken = await Employee.findOne({ code: candidate });
+        if (!taken) { empCode = candidate; break; }
+      }
+      if (!empCode) return JSON.stringify({ error: "Could not generate a unique employee code after 10 attempts" });
+    }
+
+    const emailTaken = await Employee.findOne({ email: empEmail });
+    if (emailTaken) return JSON.stringify({ error: `Employee with email '${empEmail}' already exists` });
 
     const employeeData = {
       firstName,
@@ -214,7 +284,18 @@ const createEmployee = tool(
     }
 
     const employee = await Employee.create(employeeData);
-    return JSON.stringify({ success: true, employee: { id: employee._id, name: `${employee.firstName} ${employee.lastName}`, code: employee.code, email: employee.email } });
+
+    // Create linked User account so the employee can log in
+    const userRole = (employeeData.role === "manager") ? "admin" : "employee";
+    const defaultPassword = `${firstName.charAt(0).toUpperCase()}${lastName.charAt(0).toLowerCase()}${empCode}`;
+    try {
+      await User.create({ code: empCode, email: empEmail, password: defaultPassword, role: userRole, employeeId: employee._id });
+    } catch (userErr) {
+      await Employee.findByIdAndDelete(employee._id);
+      return JSON.stringify({ error: `Empleado creado pero falló la cuenta de usuario: ${userErr.message}` });
+    }
+
+    return JSON.stringify({ success: true, employee: { id: employee._id, name: `${employee.firstName} ${employee.lastName}`, code: employee.code, email: employee.email, defaultPassword } });
   },
   {
     name: "create_employee",
@@ -280,9 +361,12 @@ const deleteEmployee = tool(
       return JSON.stringify({ error: `${emp.firstName} ${emp.lastName} has ${futureTasks} future tasks. Reassign them before deactivating.` });
     }
 
-    emp.status = "inactive";
-    await emp.save();
-    return JSON.stringify({ success: true, deactivated: `${emp.firstName} ${emp.lastName}` });
+    const confirmation = createPendingConfirmation(
+      "delete_employee",
+      { empId: emp._id, empName: `${emp.firstName} ${emp.lastName}` },
+      `Desactivar al empleado "${emp.firstName} ${emp.lastName}"`
+    );
+    return JSON.stringify({ needsConfirmation: true, ...confirmation });
   },
   {
     name: "delete_employee",
@@ -344,9 +428,12 @@ const deleteProfession = tool(
   async ({ professionName }) => {
     const prof = await Profession.findOne({ name: new RegExp(escapeRegex(professionName), "i"), isActive: true });
     if (!prof) return JSON.stringify({ error: `Profession '${professionName}' not found` });
-    prof.isActive = false;
-    await prof.save();
-    return JSON.stringify({ success: true, deactivated: prof.name });
+    const confirmation = createPendingConfirmation(
+      "delete_profession",
+      { profId: prof._id, profName: prof.name },
+      `Desactivar la profesión "${prof.name}"`
+    );
+    return JSON.stringify({ needsConfirmation: true, ...confirmation });
   },
   {
     name: "delete_profession",
@@ -505,13 +592,13 @@ const moveTask = tool(
     }
 
     if (newDate) {
-      const hour = newStartHour !== undefined ? newStartHour : (task.startDate ? task.startDate.getUTCHours() + task.startDate.getUTCMinutes() / 60 : 9);
+      const hour = newStartHour !== undefined ? newStartHour : (task.startDate ? toLocalParts(task.startDate).hour : 9);
       const startDate = buildUTCDate(newDate, hour);
       task.startDate = startDate;
       task.dueDate = new Date(startDate.getTime() + task.durationMinutes * 60000);
       actions.push("RESCHEDULED");
     } else if (newStartHour !== undefined && task.startDate) {
-      const dateStr = task.startDate.toISOString().split("T")[0];
+      const dateStr = toLocalParts(task.startDate).dateStr;
       const newStart = buildUTCDate(dateStr, newStartHour);
       task.startDate = newStart;
       task.dueDate = new Date(newStart.getTime() + task.durationMinutes * 60000);
@@ -521,7 +608,7 @@ const moveTask = tool(
     if (task.assigneeId && task.startDate) {
       const emp = await Employee.findById(task.assigneeId);
       if (emp) {
-        const startHour = task.startDate.getUTCHours() + task.startDate.getUTCMinutes() / 60;
+        const startHour = toLocalParts(task.startDate).hour;
         const endHour = startHour + task.durationMinutes / 60;
         if (!isWithinSchedule(emp.schedule, startHour, endHour)) {
           return JSON.stringify({ error: `Task falls outside ${emp.firstName}'s schedule (${emp.schedule}: ${SCHEDULE_HOURS[emp.schedule].join("-")})` });
@@ -599,10 +686,12 @@ const deleteTask = tool(
     const result = await findTaskByTitle(taskTitle);
     if (result.error) return JSON.stringify(result);
     const task = result.task;
-    const previousState = task.toJSON();
-    await Task.findByIdAndDelete(task._id);
-    await logTaskChange(task._id, "DELETED", null, previousState, null);
-    return JSON.stringify({ success: true, deleted: task.title });
+    const confirmation = createPendingConfirmation(
+      "delete_task",
+      { taskId: task._id, taskTitle: task.title, previousState: task.toJSON() },
+      `Eliminar la tarea "${task.title}"`
+    );
+    return JSON.stringify({ needsConfirmation: true, ...confirmation });
   },
   {
     name: "delete_task",
@@ -709,9 +798,10 @@ const llm = new ChatOpenAI({
 });
 
 const runAgent = async (prompt) => {
-  const today = new Date().toISOString().split("T")[0];
-  const dayName = new Date().toLocaleDateString("es-ES", { weekday: "long" });
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  const now = new Date();
+  const today = toLocalParts(now).dateStr;
+  const dayName = now.toLocaleDateString("es-ES", { timeZone: "Europe/Madrid", weekday: "long" });
+  const tomorrow = toLocalParts(new Date(now.getTime() + 86400000)).dateStr;
 
   const systemPrompt =
     `You are a scheduling assistant for a company. Today is ${dayName}, ${today}. Tomorrow is ${tomorrow}. ` +
@@ -745,10 +835,28 @@ const runAgent = async (prompt) => {
       { signal: controller.signal }
     );
     const lastMessage = result.messages[result.messages.length - 1];
-    return lastMessage.content;
+
+    // Scan ToolMessages for a pending confirmation created during this run
+    let pendingConfirmation = null;
+    for (const msg of result.messages) {
+      const isToolMsg =
+        (typeof msg._getType === "function" && msg._getType() === "tool") ||
+        msg.constructor?.name === "ToolMessage";
+      if (isToolMsg) {
+        try {
+          const parsed = JSON.parse(msg.content);
+          if (parsed.needsConfirmation && parsed.id) {
+            pendingConfirmation = { id: parsed.id, description: parsed.description };
+            break;
+          }
+        } catch { }
+      }
+    }
+
+    return { message: lastMessage.content, pendingConfirmation };
   } finally {
     clearTimeout(timeout);
   }
 };
 
-module.exports = { runAgent };
+module.exports = { runAgent, executeConfirmedAction, cancelConfirmation };

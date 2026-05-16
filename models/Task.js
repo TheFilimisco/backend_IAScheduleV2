@@ -22,6 +22,9 @@ const taskSchema = new mongoose.Schema({
   // Ej: 90 = tarea de 1h 30min
   durationMinutes: { type: Number, required: true, default: 60 },
 
+  // Comentario del empleado al completar la tarea
+  comment: { type: String, default: null },
+
 }, { timestamps: true });
 
 taskSchema.index({ assigneeId: 1, startDate: 1, dueDate: 1 });

@@ -16,8 +16,7 @@ const professionSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-// Índice para búsquedas rápidas por nombre
-professionSchema.index({ name: 1 });
+// El índice para búsquedas por nombre se crea automáticamente gracias a 'unique: true' en la línea 5
 
 professionSchema.set('toJSON', {
   virtuals: true,

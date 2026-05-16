@@ -73,7 +73,12 @@ router.post("/", async (req, res) => {
 
     await logTaskChange(task._id, "CREATED", createdBy, null, task.toJSON());
 
-    res.status(201).json({ task });
+    const populatedTask = await Task.findById(task._id)
+      .populate("assigneeId")
+      .populate("departmentId")
+      .populate("createdBy");
+
+    res.status(201).json({ task: populatedTask });
   } catch (err) {
     console.error("[Tasks POST] ", err);
     res.status(500).json({ error: "Server error" });
@@ -134,9 +139,44 @@ router.put("/:id", async (req, res) => {
 
     await logTaskChange(task._id, action, req.body.changedBy, previousState, newState);
 
-    res.status(200).json({ task });
+    const populatedTask = await Task.findById(task._id)
+      .populate("assigneeId")
+      .populate("departmentId")
+      .populate("createdBy");
+
+    res.status(200).json({ task: populatedTask });
   } catch (err) {
     console.error("[Tasks PUT] ", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/:id/comment", async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    const { comment, changedBy } = req.body;
+    if (!comment || !comment.trim()) {
+      return res.status(400).json({ error: "Comment is required" });
+    }
+
+    task.comment = comment.trim();
+    await task.save();
+
+    const HistoryTask = require('../models/HistoryTask');
+    await HistoryTask.create({
+      taskId: task._id,
+      action: 'UPDATED',
+      changedBy: changedBy || null,
+      previousState: null,
+      newState: null,
+      comments: comment.trim(),
+    });
+
+    res.status(201).json({ message: "Comment saved", comment: task.comment });
+  } catch (err) {
+    console.error("[Tasks POST comment] ", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -151,7 +191,7 @@ router.delete("/:id", async (req, res) => {
     const previousState = task.toJSON();
     await Task.findByIdAndDelete(req.params.id);
 
-    await logTaskChange(task._id, "DELETED", null, previousState, null);
+    await logTaskChange(task._id, "DELETED", req.body?.changedBy || null, previousState, null);
 
     res.status(200).json({ message: "Task deleted" });
   } catch (err) {
